@@ -1,3 +1,4 @@
+import argparse
 import os
 import time
 import json
@@ -13,6 +14,11 @@ MIN_CALL_INTERVAL_SECONDS = 0.1
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Update market data.")
+    parser.add_argument("--force", action="store_true", help="Force update even on non-trading days.")
+    args = parser.parse_args()
+    print(f"历史日线调度器于 {time.strftime('%Y-%m-%d %H:%M:%S')} 启动")
+
     # 查看今日是否是交易日，如果不是交易日则不更新数据
     trade_calendar_info_path = "/root/.openclaw/workspace/data/raw/trade_calendar_info.json"
     if not os.path.exists(trade_calendar_info_path):
@@ -24,7 +30,7 @@ def main():
         raise ValueError("交易日历信息中缺少 current_trade_day 字段")
     current_trade_day = str(current_trade_day)
     today_str = time.strftime("%Y%m%d")
-    if current_trade_day != today_str:
+    if current_trade_day != today_str and not args.force:
         print(f"今天 {today_str} 不是交易日，已跳过数据更新")
         return
 
@@ -99,10 +105,12 @@ def main():
             continue
         df_board_stocks = pd.read_csv(board_path)
         for _, stock_row in df_board_stocks.iterrows():
-            stock_code = stock_row["ts_code"]
+            stock_code = stock_row["con_code"]
             if stock_code not in stock_to_boards:
-                stock_to_boards[stock_code] = []
-            stock_to_boards[stock_code].append(name)
+                stock_to_boards[stock_code] = set()
+            stock_to_boards[stock_code].add(name)
+    # Convert sets to sorted lists for stable JSON output.
+    stock_to_boards = {k: sorted(v) for k, v in stock_to_boards.items()}
     with open(stock_to_boards_path, 'w', encoding='utf-8') as f:
         json.dump(stock_to_boards, f, ensure_ascii=False, indent=4)
     print(f"个股->板块映射已保存到 {stock_to_boards_path}")

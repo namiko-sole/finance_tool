@@ -63,7 +63,7 @@ SOURCES = {
     'wallstreetcn': '华尔街见闻'
 }
 
-# 默认抓取的源（所有 10 个数据源）
+# 默认抓取的源（9个数据源）
 DEFAULT_SOURCES = [
     'cls',           # 财联社
     'wallstreetcn',  # 华尔街见闻
@@ -74,7 +74,7 @@ DEFAULT_SOURCES = [
     'fenghuang',     # 凤凰网
     'jinrongjie',     # 金融界
     'yuncaijing',    # 云财经
-    'xq'             # 雪球
+    # 'xq'             # 雪球
 ]
 
 # 输出目录（使用固定路径）
@@ -382,6 +382,11 @@ def get_all_sources_news(sources: List[str] = None, incremental: bool = False, s
             
             # 收集新增新闻
             all_new_news.extend(news)
+            # 输出每个数据源的获取情况
+            if incremental:
+                print(f"  ✅ {name}({source}): 新增 {new_count} 条")
+            else:
+                print(f"  ✅ {name}({source}): 获取 {new_count} 条")
         else:
             # 获取失败
             results[source] = {
@@ -392,11 +397,13 @@ def get_all_sources_news(sources: List[str] = None, incremental: bool = False, s
             # 增量模式：添加 new_count 字段（失败时为0）
             if incremental:
                 results[source]['new_count'] = 0
+            # 输出失败信息
+            print(f"  ❌ {name}({source}): {results[source]['error']}")
 
     return_dict = {
         'sources': results,
         'total_news': total,
-        'working_sources': sum(1 for v in results.values() if v.get('count', 0) > 0)
+        'working_sources': sum(1 for v in results.values() if 'error' not in v)
     }
     
     # 增量模式：添加 total_new_news 和 incremental 标识
@@ -491,11 +498,8 @@ def save_new_news(all_new_news: List[Dict]):
     Args:
         all_new_news: 所有新增新闻的列表
     """
-    if not all_new_news:
-        return
-    
     # 按时间排序（最新的在前）
-    sorted_news = sorted(all_new_news, key=lambda x: x.get('time', ''), reverse=True)
+    sorted_news = sorted(all_new_news or [], key=lambda x: x.get('time', ''), reverse=True)
     
     output = {
         'crawl_time': datetime.now().isoformat(),

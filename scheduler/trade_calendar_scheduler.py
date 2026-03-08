@@ -7,6 +7,7 @@ from scheduler_utils import is_fresh, update_csv, fetch_with_retry
 data_dir = "/root/.openclaw/workspace/data/raw/"
 
 def main():
+    print(f"交易日历调度器于 {time.strftime('%Y-%m-%d %H:%M:%S')} 启动")
     pro = ts.pro_api("da8b0417e689bd72a3e5b3312fb6094f9405b06b667f7033eebecf83")
 
     # 保存交易日历数据到CSV文件
