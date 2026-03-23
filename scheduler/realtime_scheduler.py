@@ -121,7 +121,7 @@ def fetch_and_save_realtime():
             if df is not None and len(df) > 0:
                 log(f"获取到 {len(df)} 只股票数据")
                 # 临时保存到当前文件目录下，方便调试查看
-                df.to_csv(os.path.join(os.path.dirname(__file__), "temp_stock_zh_a_spot.csv"), index=False, encoding="utf-8-sig")
+                df.to_csv(os.path.join(os.path.dirname(__file__), "realtime_stock_zh_a_spot.csv"), index=False, encoding="utf-8-sig")
                 break
         except Exception as e:
             log(f"获取数据失败 (尝试 {attempt+1}/{max_retries}): {e}")
@@ -153,6 +153,12 @@ def fetch_and_save_realtime():
     
     # 转换列名
     df = df.rename(columns=column_map)
+
+    # 单位转换: 成交量 /100，成交额 /1000
+    if "vol" in df.columns:
+        df["vol"] = pd.to_numeric(df["vol"], errors="coerce") / 100
+    if "amount" in df.columns:
+        df["amount"] = pd.to_numeric(df["amount"], errors="coerce") / 1000
 
     # 转换代码格式
     df["ts_code"] = df["ts_code"].apply(convert_code)
@@ -202,12 +208,7 @@ def fetch_and_save_realtime():
                     existing_df.loc[today_mask, columns[2:]] = row[columns[2:]].values
                 else:
                     # 追加新记录
-                    existing_df = pd.concat([existing_df, row.to_frame().T], ignore_index=True)
-
-                # 统一按交易日倒序，确保最新数据在文件顶部
-                existing_df["trade_date"] = pd.to_numeric(existing_df["trade_date"], errors="coerce")
-                existing_df = existing_df.sort_values("trade_date", ascending=False, na_position="last")
-                existing_df["trade_date"] = existing_df["trade_date"].astype("Int64").astype(str)
+                    existing_df = pd.concat([row.to_frame().T, existing_df], ignore_index=True)
                 
                 # 保存
                 existing_df.to_csv(csv_path, index=False, encoding="utf-8-sig")
@@ -260,7 +261,7 @@ def main():
         except Exception as e:
             log(f"发生异常: {e}")
         
-        # 休眠3-4分钟（随机）
+        # 休眠（随机）
         interval = get_random_interval()
         log(f"休眠 {interval} 秒...")
         time.sleep(interval)

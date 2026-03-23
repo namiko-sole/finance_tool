@@ -11,36 +11,22 @@ sys.path.insert(0, '/root/.openclaw/workspace/finance_tool/fetchers')
 # 导入数据获取器
 from data_fetcher import DataFetcher
 
-# 导入MyTT函数
+from backset import *
+from draw import *
 from MyTT import *
-from backset import BACKSET
 
 def main():
     fetcher = DataFetcher()
     df = fetcher.get_stock_daily('601888', start_date='20250101', end_date=None)
-
     if df is None or df.empty:
         print("无法获取数据")
         return
-
-    # 重命名列
-    df = df.rename(columns={
-        'trade_date': 'date',
-        'open': 'O',
-        'high': 'H',
-        'low': 'L',
-        'close': 'C',
-        'vol': 'V'
-    })
-
-    # 确保有必要的列
-    if 'date' not in df.columns:
-        df['date'] = df.index
-
-    L = df['L']
-    H = df['H']
-    C = df['C']
-    V = df['V'] if 'V' in df.columns else df['volume']
+    
+    C=df.close.values; O=df.open.values
+    H=df.high.values; L=df.low.values
+    
+    # 创建注解构建器
+    builder = AnnotationBuilder(df)
 
     N = (0, 1, 1)
     GSKZA = BACKSET(LLV(L, 5) < REF(LLV(L, 4), 1), 4)
@@ -61,9 +47,10 @@ def main():
     A = (H == HHV(H, DTIME * 5)) & (HHV(H, DTIME * 5) > REF(HHV(H, DTIME * 5), 1))
     B = (L == LLV(L, DTIME * 5)) & (LLV(L, DTIME * 5) < REF(LLV(L, DTIME * 5), 1))
 
-    # 通达信绘图样式参数(LINETHICK/COLOR等)在Python中不直接可用，这里仅保留线数据
-    画线 = DRAWLINE(A, H, B, L, 0)
-    中枢 = DRAWLINE(B, L, A, H, 0)
+    # # 通达信绘图样式参数(LINETHICK/COLOR等)在Python中不直接可用，这里仅保留线数据
+    # # DRAWLINE(cond1, price1, cond2, price2, builder, color, style, width)
+    # 画线 = DRAWLINE(A, H, B, L, builder, 'COLOR3300FF', 'solid', 2)
+    # 中枢 = DRAWLINE(B, L, A, H, builder, 'COLOR3300FF', 'solid', 2)
 
     YP = IF(((JQDD < 4) & (HHV(QKPD, JQDD) == 1)) | (REF(DBLS, JQDD) == 0), 1, 0)
     PD = IF((缠C == 1) & (REF(JQDD, 1) <= REF(JQTG, 1)) & (YP == 1) & (DZZQ > REF(XZZQ, JQDD + 1)) & (DZZQ > REF(XZZQ, JQDD)) & (DZZQ > REF(DZZQ, JQTG)), 1, 0)
@@ -103,11 +90,33 @@ def main():
     JDBL = IF(AAAD == 0, GBLYX + DBLYX, AAAD)
 
     # 原公式中的 DRAWNULL/CIRCLEDOT/COLOR/DRAWTEXT 是绘图语法，这里保留信号序列
+    # 缠: IF(JDBL=-1, L*0.99, IF(JDBL=1, H*1.01, DRAWNULL)), CIRCLEDOT, COLORLIMAGENTA
     缠 = IF(JDBL == -1, L * 0.99, IF(JDBL == 1, H * 1.01, np.nan))
-    卖信号 = DRAWTEXT(JDBL=1, H*1.03, '卖')
-    买信号 = DRAWTEXT(JDBL=-1, L*0.97, '买')
-    缠论1 = DRAWLINE(JDBL == -1, 缠, JDBL == 1, 缠, 0)
-    缠论2 = DRAWLINE(JDBL == 1, 缠, JDBL == -1, 缠, 0)
+    # # 添加圆点标记
+    # 缠_dot = CIRCLEDOT(缠, builder, 'COLORLIMAGENTA')
+
+    # DRAWTEXT(JDBL=1, H*1.03, '卖'), COLORLIGREEN
+    卖信号 = DRAWTEXT(JDBL == 1, H * 1.03, '卖', builder, 'COLORLIGREEN')
+
+    # DRAWTEXT(JDBL=-1, L*0.97, '买'), COLORRED
+    买信号 = DRAWTEXT(JDBL == -1, L * 0.97, '买', builder, 'COLORRED')
+
+    # 缠论1: DRAWLINE(JDBL=-1, 缠, JDBL=1, 缠, 0), DOTLINE, COLORFF6600
+    缠论1 = DRAWLINE(JDBL == -1, 缠, JDBL == 1, 缠, builder, 'COLORFF6600', 'dotted', 1)
+
+    # 缠论2: DRAWLINE(JDBL=1, 缠, JDBL=-1, 缠, 0), DOTLINE, COLORFF6600
+    缠论2 = DRAWLINE(JDBL == 1, 缠, JDBL == -1, 缠, builder, 'COLOR3300FF', 'solid', 1, merge=True)
+
+    # 输出JSON到文件
+    output_dir = '/root/.openclaw/workspace/output/kline'
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, 'chanlun_tt_annotations.json')
+
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write(builder.to_json())
+
+    print(f"Annotations saved to {output_path}")
+    print(builder.to_json())
 
 if __name__ == "__main__":
     main()

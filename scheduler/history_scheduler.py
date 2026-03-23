@@ -56,12 +56,19 @@ def main():
 
     # 保存所有股票的日线历史数据到CSV文件
     os.makedirs(os.path.join(data_dir, "stock_daily"), exist_ok=True)
+    total_stock_count = len(df_stock_list)
+    fetched_count = 0
+    saved_count = 0
+    skipped_count = 0
+    failed_count = 0
+
     for _, row in tqdm(df_stock_list.iterrows(), total=len(df_stock_list), desc="更新股票日线历史数据"):
         ts_code = row["ts_code"]
         daily_path = os.path.join(data_dir, "stock_daily", f"{ts_code}.csv")
-        if is_fresh(daily_path):
-            # print(f"{ts_code} 的日线历史数据文件较新，已跳过更新")
-            continue
+        # if is_fresh(daily_path):
+        #     # print(f"{ts_code} 的日线历史数据文件较新，已跳过更新")
+        #     skipped_count += 1
+        #     continue
         df_daily = fetch_with_retry(
             lambda: pro.daily(
                 ts_code=ts_code,
@@ -69,29 +76,70 @@ def main():
             ),
             f"{ts_code} 日线历史数据",
         )
-        df_daily.to_csv(daily_path, index=False, encoding="utf-8-sig")
+        if df_daily is None:
+            failed_count += 1
+            print(f"警告: {ts_code} 日线历史数据获取失败，已跳过保存")
+            continue
+
+        fetched_count += 1
+        try:
+            df_daily.to_csv(daily_path, index=False, encoding="utf-8-sig")
+            saved_count += 1
+        except Exception as exc:
+            failed_count += 1
+            print(f"警告: {ts_code} 日线历史数据保存失败: {exc}")
         # print(f"{ts_code} 的日线历史数据已保存到 stock_daily/{ts_code}.csv")
         time.sleep(MIN_CALL_INTERVAL_SECONDS)
+
+    print(
+        f"股票日线历史更新统计: 总数 {total_stock_count} 只, 获取到 {fetched_count} 只, "
+        f"更新保存 {saved_count} 只, 跳过 {skipped_count} 只, 失败 {failed_count} 只"
+    )
     
     # 保存所有板块概念的成分股数据到CSV文件
     os.makedirs(os.path.join(data_dir, "board_stocks"), exist_ok=True)
+    total_board_count = len(stock_board)
+    board_fetched_count = 0
+    board_saved_count = 0
+    board_skipped_count = 0
+    board_failed_count = 0
+
     for _, row in tqdm(stock_board.iterrows(), total=len(stock_board), desc="更新板块成分股数据"):
         code = row["ts_code"]
         name = row["name"]
         board_path = os.path.join(data_dir, "board_stocks", f"{name}.csv")
-        if is_fresh(board_path):
-            # print(f"{name} 的板块成分股数据文件较新，已跳过更新")
-            continue
+        # if is_fresh(board_path):
+        #     # print(f"{name} 的板块成分股数据文件较新，已跳过更新")
+        #     board_skipped_count += 1
+        #     continue
         df_board_stocks = fetch_with_retry(
             lambda: pro.ths_member(ts_code=code),
             f"{name} 板块成分股",
         )
+        if df_board_stocks is None:
+            board_failed_count += 1
+            print(f"警告: {name} 板块成分股数据获取失败，已跳过保存")
+            continue
+
+        board_fetched_count += 1
         try:
             df_board_stocks.to_csv(board_path, index=False, encoding="utf-8-sig")
+            board_saved_count += 1
         except Exception as exc:
+            board_failed_count += 1
             os.makedirs(os.path.dirname(board_path), exist_ok=True)
-            df_board_stocks.to_csv(board_path, index=False, encoding="utf-8-sig")
+            try:
+                df_board_stocks.to_csv(board_path, index=False, encoding="utf-8-sig")
+                board_saved_count += 1
+            except Exception as retry_exc:
+                board_failed_count += 1
+                print(f"警告: {name} 板块成分股数据保存失败: {retry_exc}")
         time.sleep(MIN_CALL_INTERVAL_SECONDS)
+
+    print(
+        f"板块成分股更新统计: 总数 {total_board_count} 个, 获取到 {board_fetched_count} 个, "
+        f"更新保存 {board_saved_count} 个, 跳过 {board_skipped_count} 个, 失败 {board_failed_count} 个"
+    )
 
     # 创建一个映射, 用于个股->板块的快速查询, 并保存到json中, 以便后续使用
     stock_to_boards_path = os.path.join(data_dir, "stock_to_boards.json")

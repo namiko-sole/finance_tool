@@ -191,9 +191,9 @@ def plot_kline(stock_code, start_date=None, end_date=None,
         # 是文件路径
         with open(config, 'r', encoding='utf-8') as f:
             config = json.load(f)
-    
+
     # 导入指标模块
-    import kline_plot.indicators as ind_module
+    import finance_tool.kline_plot.indicators as ind_module
     
     # 默认指标列表
     indicator_list = ['MA5', 'MA10', 'MA20']
@@ -253,7 +253,15 @@ def plot_kline(stock_code, start_date=None, end_date=None,
             apds.append(mpf.make_addplot(kdj['d'], panel=2+panel_count, color='g', label='D'))
             apds.append(mpf.make_addplot(kdj['j'], panel=2+panel_count, color='b', label='J'))
             panel_count += 1
-    
+
+        elif ind_upper == 'BULAO':
+            # 不落浪 - 副图
+            bulao = ind_module.bulao(df)
+            apds.append(mpf.make_addplot(bulao['xys0'], panel=2+panel_count, color='red', label='XYS0'))
+            apds.append(mpf.make_addplot(bulao['x1'], panel=2+panel_count, color='blue', label='X1'))
+            apds.append(mpf.make_addplot(bulao['x2'], panel=2+panel_count, color='cyan', label='X2'))
+            panel_count += 1
+
     # 调整面板比例 (主图 + 成交量 + 指标副图)
     if panel_count > 0:
         # panel 0: K线, panel 1: 成交量, panel 2+: 指标

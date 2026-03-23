@@ -145,18 +145,54 @@ def moving_average(df, periods=[5, 10, 20, 30, 60]):
 def volume_ma(df, periods=[5, 10]):
     """
     成交量均线
-    
+
     Args:
         df: DataFrame with 'vol' column
         periods: 周期列表
-    
+
     Returns:
         DataFrame
     """
     vol = df['vol']
     result = {}
-    
+
     for period in periods:
         result[f'VOL_MA{period}'] = vol.rolling(window=period).mean()
-    
+
     return pd.DataFrame(result)
+
+
+def bulao(df):
+    """
+    不落浪指标 - 通达信指标移植
+
+    Args:
+        df: DataFrame with 'close', 'high', 'low' columns
+
+    Returns:
+        DataFrame with columns: xys0, x1, x2
+    """
+    close = df['close']
+    high = df['high']
+    low = df['low']
+
+    # WY1001:=(2*CLOSE+HIGH+LOW)/4
+    wy1001 = (2 * close + high + low) / 4
+
+    # 三层EMA平滑
+    wy1002 = ema(wy1001, 3)
+    wy1003 = ema(wy1002, 3)
+    wy1004 = ema(wy1003, 3)
+
+    # XYS0: 变化率百分比
+    xys0 = (wy1004 - wy1004.shift(1)) / wy1004.shift(1) * 100
+
+    # X1, X2: 移动平均
+    x1 = xys0.rolling(window=1).mean()
+    x2 = xys0.rolling(window=2).mean()
+
+    return pd.DataFrame({
+        'xys0': xys0,
+        'x1': x1,
+        'x2': x2
+    })
