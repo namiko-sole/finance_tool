@@ -1,14 +1,17 @@
 """
 缠论买点过滤器
 
-从股票列表中筛选出最近N天缠论买点与BULAO金叉共振的个股
+从股票列表中筛选出最近N天缠论买点与BULAO金叉共振的个股，并添加MACD过滤
 
 功能：
 1. 从 stock_list.csv 获取所有个股
 2. 通过 DataFetcher 获取每个个股的数据
 3. 使用 chanlun_tt/main.py 的 get_buy_sell_signals 获取缠论买卖信号
 4. 使用 bulao/main.py 的 get_buy_sell_signals 获取BULAO金叉信号
-5. 筛选最近N天同时出现缠论买点和BULAO金叉的个股并输出
+5. 计算MACD并进行零下段背离过滤：
+   - 如果MACD > 0，直接通过
+   - 如果MACD < 0，检查当前零下段最小值是否大于上一个零下段最小值（背离改善）
+6. 筛选最近N天同时出现缠论买点、BULAO金叉且MACD过滤通过的个股并输出
 """
 
 import sys
@@ -22,6 +25,7 @@ from typing import List, Dict, Set
 # 添加路径
 sys.path.insert(0, '/root/.openclaw/workspace/finance_tool/fetchers')
 sys.path.insert(0, '/root/.openclaw/workspace/finance_tool/analyze/metric_tdx/chanlun_tt')
+sys.path.insert(0, '/root/.openclaw/workspace/finance_tool/analyze/metric_tdx')
 
 # 导入数据获取器
 from data_fetcher import DataFetcher
@@ -42,6 +46,80 @@ def load_bulao_signal_func():
 
 
 get_bulao_buy_sell_signals = load_bulao_signal_func()
+
+
+def check_macd_filter(macd_hist_series: pd.Series, current_index: int) -> bool:
+    """
+    检查MACD是否满足过滤条件
+
+    Args:
+        macd_hist_series: MACD柱状图值序列（按时间正序）
+        current_index: 当前日期在序列中的索引
+
+    Returns:
+        True表示通过（保留），False表示不通过（过滤）
+
+    过滤逻辑：
+    1. 如果今日MACD > 0，直接通过
+    2. 如果今日MACD < 0，则判断当前零下段最小值是否大于上一个零下段最小值
+       - 如果大于，说明背离改善，通过
+       - 如果小于或等于，说明仍在恶化，过滤掉
+    """
+    if current_index >= len(macd_hist_series):
+        return False
+
+    current_macd = macd_hist_series.iloc[current_index]
+
+    # 今日MACD > 0，直接通过
+    if current_macd > 0:
+        return True
+
+    # 今日MACD < 0，需要与上一个零下段最小值比较
+    macd_values = macd_hist_series.iloc[:current_index + 1].values
+
+    # 按零为分界线分段
+    segments = []
+    current_segment = []
+
+    for val in macd_values:
+        if not current_segment:
+            current_segment.append(val)
+        else:
+            # 同号则加入当前段，异号则新开一段
+            last_val = current_segment[-1]
+            same_sign = (last_val > 0 and val > 0) or (last_val < 0 and val < 0) or (last_val == 0 and val == 0)
+            if same_sign:
+                current_segment.append(val)
+            else:
+                segments.append(current_segment)
+                current_segment = [val]
+
+    if current_segment:
+        segments.append(current_segment)
+
+    # 找出当前段
+    current_segment = segments[-1]
+    current_is_negative = current_segment[-1] < 0
+
+    if not current_is_negative:
+        return True  # 当前段是零上段，通过
+
+    # 当前段是零下段，获取其最小值
+    current_min = min(current_segment)
+
+    # 查找上一个零下段
+    prev_negative_min = None
+    for seg in reversed(segments[:-1]):
+        if seg[-1] < 0:  # 零下段
+            prev_negative_min = min(seg)
+            break
+
+    # 如果没有上一个零下段，通过
+    if prev_negative_min is None:
+        return True
+
+    # 比较两个零下段的最小值：当前段最小值 > 上一个零下段最小值，则通过
+    return current_min > prev_negative_min
 
 
 def _is_st_stock(name: str) -> bool:
@@ -154,14 +232,19 @@ def filter_stocks_with_dual_buy_signal_recent_days(
     recent_days: int = 3
 ) -> List[Dict]:
     """
-    筛选最近N天同时出现缠论买点和BULAO金叉的个股
-    
+    筛选最近N天同时出现缠论买点、BULAO金叉且MACD过滤通过的个股
+
+    MACD过滤规则：
+    - 如果当日MACD > 0，直接通过
+    - 如果当日MACD < 0，检查当前零下段最小值是否大于上一个零下段最小值
+      （即零下段背离改善，通过；否则过滤掉）
+
     Args:
         stock_list: 股票列表 DataFrame
         data_fetcher: DataFetcher 实例
-        lookback_days: 回溯天数，用于获取足够的历史数据计算缠论
+        lookback_days: 回溯天数，用于获取足够的历史数据计算缠论和MACD
         recent_days: 最近N天（含今天）
-        
+
     Returns:
         最近N天共振个股列表，每个元素包含股票代码、名称和信号信息
     """
@@ -237,6 +320,48 @@ def filter_stocks_with_dual_buy_signal_recent_days(
                         bulao_price = signal.get('price', 0)
                         break
 
+                # MACD过滤检查 - 复用缠论分析中已获取的数据
+                try:
+                    # 从缠论结果中复用K线数据
+                    hist_df = chanlun_result.get('df')
+
+                    if hist_df is None or hist_df.empty:
+                        print(f"MACD过滤: {ts_code} {name} - 无历史数据，跳过")
+                        continue
+
+                    # 确保数据按日期排序（data_fetcher返回的列名是'date'）
+                    if 'date' in hist_df.columns:
+                        hist_df = hist_df.sort_values('date').reset_index(drop=True)
+
+                    # 导入MACD计算函数
+                    from MyTT import MACD
+
+                    # 计算MACD
+                    _, _, macd_hist = MACD(hist_df['close'].values)
+
+                    # 找到signal_date对应的索引（matched_date格式: YYYY-MM-DD，hist_df['date']也是相同格式）
+                    signal_idx_list = hist_df[hist_df['date'] == matched_date].index.tolist()
+
+                    if not signal_idx_list:
+                        print(f"MACD过滤: {ts_code} {name} - 未找到信号日期，跳过")
+                        continue
+
+                    signal_idx = signal_idx_list[0]
+                    macd_series = pd.Series(macd_hist)
+
+                    # 检查MACD过滤条件
+                    if not check_macd_filter(macd_series, signal_idx):
+                        current_macd = float(macd_series.iloc[signal_idx]) if signal_idx < len(macd_series) else 0.0
+                        print(f"MACD过滤: {ts_code} {name} {matched_date} (MACD={current_macd:.4f}, 当前零下段未改善)")
+                        continue  # 跳过此股票
+
+                    # 获取当前MACD值用于输出
+                    current_macd_value = float(macd_series.iloc[signal_idx]) if signal_idx < len(macd_series) else 0.0
+
+                except Exception as e:
+                    print(f"MACD计算失败: {ts_code} {name} - {e}")
+                    continue
+
                 stocks_with_buy_signal.append({
                     'ts_code': ts_code,
                     'symbol': symbol,
@@ -244,9 +369,10 @@ def filter_stocks_with_dual_buy_signal_recent_days(
                     'signal_date': matched_date,
                     'chanlun_price': chanlun_price,
                     'bulao_price': bulao_price,
-                    'jdbl': chanlun_jdbl
+                    'jdbl': chanlun_jdbl,
+                    'macd_value': current_macd_value
                 })
-                print(f"找到共振: {ts_code} {name} {matched_date}")
+                print(f"找到共振: {ts_code} {name} {matched_date} (MACD={current_macd_value:.4f})")
                     
         except Exception as e:
             # 跳过获取失败的股票
@@ -351,16 +477,17 @@ def main():
     # 4. 输出结果
     print()
     print("=" * 60)
-    print(f"筛选结果: 最近{args.days}天共 {len(stocks_with_buy)} 只个股出现缠论+BULAO共振买点")
+    print(f"筛选结果: 最近{args.days}天共 {len(stocks_with_buy)} 只个股出现缠论+BULAO共振买点（含MACD过滤）")
     print("=" * 60)
-    
+
     if stocks_with_buy:
-        print(f"\n{'代码':<12} {'名称':<15} {'缠论价格':<12} {'BULAO价格':<12} {'信号日期'}")
-        print("-" * 60)
+        print(f"\n{'代码':<12} {'名称':<15} {'缠论价格':<12} {'BULAO价格':<12} {'MACD':<10} {'信号日期'}")
+        print("-" * 75)
         for stock in stocks_with_buy:
             print(
                 f"{stock['ts_code']:<12} {stock['name']:<15} "
-                f"{stock['chanlun_price']:<12.2f} {stock['bulao_price']:<12.2f} {stock['signal_date']}"
+                f"{stock['chanlun_price']:<12.2f} {stock['bulao_price']:<12.2f} "
+                f"{stock.get('macd_value', 0):<10.4f} {stock['signal_date']}"
             )
         
         # 保存结果
