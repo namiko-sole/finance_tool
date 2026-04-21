@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 A股实时行情爬虫 - 定时任务版
-- 每天9:10启动，15:10自动退出
-- 交易时段: 9:15-11:30, 13:00-15:00
+- 每天9:15启动，15:10自动退出
+- 交易时段: 9:25-11:30, 13:00-15:00
 - 每3分钟执行一次
 - 数据存到 stock_daily/{ts_code}.csv
 """
@@ -22,7 +22,7 @@ TRADE_CALENDAR_PATH = os.path.join(DATA_DIR, "trade_calendar_info.json")
 LOG_FILE = "/root/.openclaw/workspace/finance_tool/scheduler/realtime_scheduler.log"
 
 # 交易时段
-MORNING_START = dt_time(9, 15)
+MORNING_START = dt_time(9, 25)
 MORNING_END = dt_time(11, 30)
 AFTERNOON_START = dt_time(13, 0)
 AFTERNOON_END = dt_time(17, 0)
@@ -219,12 +219,50 @@ def fetch_and_save_realtime():
     except Exception as e:
         log(f"处理数据时出错: {e}")
     
+    # === 个股监控引擎 ===
+    try:
+        from monitor import MonitorEngine
+        engine = MonitorEngine()
+        engine.run(df)
+    except Exception as e:
+        log(f"监控引擎异常(不影响主流程): {e}")
+
     log(f"实时数据更新完成: 保存 {saved_count} 只，跳过 {skipped_count} 只")
     return True
 
 
+def kill_old_processes():
+    """杀掉同脚本的其他运行实例"""
+    import subprocess
+    current_pid = os.getpid()
+    script_path = os.path.abspath(__file__)
+    try:
+        result = subprocess.run(
+            ['pgrep', '-f', script_path],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            pids = [int(p) for p in result.stdout.strip().split('\n') if p.strip()]
+            other_pids = [p for p in pids if p != current_pid]
+            if other_pids:
+                log(f"发现旧进程: {other_pids}，正在杀掉...")
+                for pid in other_pids:
+                    try:
+                        os.kill(pid, 9)
+                        log(f"  已杀掉 PID {pid}")
+                    except ProcessLookupError:
+                        pass
+                time.sleep(2)
+                log("旧进程清理完毕")
+    except Exception as e:
+        log(f"检查旧进程时出错: {e}")
+
+
 def main():
     """主循环"""
+    # 启动前先杀掉旧进程
+    kill_old_processes()
+
     log("=" * 50)
     log("实时行情爬虫启动")
     log("=" * 50)
@@ -248,7 +286,7 @@ def main():
             # 检查是否在交易时段
             if not is_trading_hours():
                 now = datetime.now().strftime("%H:%M:%S")
-                log(f"当前 {now} 不在交易时段 (9:15-11:30, 13:00-15:00)，休眠等待...")
+                log(f"当前 {now} 不在交易时段 (9:25-11:30, 13:00-15:00)，休眠等待...")
                 time.sleep(60)  # 非交易时段每分钟检查一次
                 continue
             

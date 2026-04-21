@@ -28,7 +28,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 # from config import DATA_TUSHARE, TUSHARE_SUMMARY, TUSHARE_COOKIE, REQUEST_DELAY
 
 # Cookie (从环境变量读取，如果未设置则使用默认值)
-COOKIE = os.environ.get("TUSHARE_COOKIE", "uid=2|1:0|10:1771858073|3:uid|8:OTQ0MDI5|e4fde30a4396dff5bd6763e03fe672ca1b4d057f0da5dd1fb8e18dea74908aff; username=2|1:0|10:1771858073|8:username|8:bmFtaWtv|2689a69455e3c0607a336ecdbaec2a2059f373c322654de89cc30517250f3b41")
+COOKIE = os.environ.get("TUSHARE_COOKIE", "uid=2|1:0|10:1774920596|3:uid|8:OTQ0MDI5|fc3f572eee54b537a5f6a9f7426c54cc57dcebdbac9be5ee6fdc50ccd5f64b16; username=2|1:0|10:1774920596|8:username|8:bmFtaWtv|b44347590fa49344da36700e68b1bbb655dbfb5e221d0173b8781c68b6e2793d")
 
 # 请求Headers（模拟真实浏览器）
 HEADERS = {
@@ -63,7 +63,7 @@ SOURCES = {
     'wallstreetcn': '华尔街见闻'
 }
 
-# 默认抓取的源（9个数据源）
+# 默认抓取的源（10个数据源）
 DEFAULT_SOURCES = [
     'cls',           # 财联社
     'wallstreetcn',  # 华尔街见闻
@@ -74,7 +74,7 @@ DEFAULT_SOURCES = [
     'fenghuang',     # 凤凰网
     'jinrongjie',     # 金融界
     'yuncaijing',    # 云财经
-    # 'xq'             # 雪球
+    'xq'             # 雪球
 ]
 
 # 输出目录（使用固定路径）
@@ -493,21 +493,57 @@ def save_news_by_date(all_news: List[Dict]):
 
 
 def save_new_news(all_new_news: List[Dict]):
-    """保存所有新增新闻到统一文件
+    """保存所有新增新闻到统一文件（累积未消费池模式）
+    
+    每次调用时：
+    1. 读取现有 new_news.json（如果存在且非空）
+    2. 将本轮新增新闻追加到已有列表
+    3. 用 (time, content[:100], source) 去重
+    4. 按时间倒序排列
+    5. 写回 new_news.json
     
     Args:
-        all_new_news: 所有新增新闻的列表
+        all_new_news: 本轮新增新闻的列表
     """
-    # 按时间排序（最新的在前）
-    sorted_news = sorted(all_new_news or [], key=lambda x: x.get('time', ''), reverse=True)
+    output_path = os.path.join(OUTPUT_DIR, 'new_news.json')
     
+    # 1. 读取已有数据
+    existing_news = []
+    if os.path.exists(output_path):
+        try:
+            with open(output_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if isinstance(data, dict) and 'news' in data:
+                    existing_news = data.get('news', []) or []
+                elif isinstance(data, list):
+                    existing_news = data
+        except (json.JSONDecodeError, OSError):
+            existing_news = []
+    
+    # 2. 合并：已有 + 本轮新增
+    combined = existing_news + (all_new_news or [])
+    
+    # 3. 去重：用 content[:200] 去掉空白字符后作为唯一键（跨源去重）
+    seen = set()
+    unique_news = []
+    for item in combined:
+        key = re.sub(r'\s+', '', item.get('content', ''))[:200]
+        if key not in seen:
+            seen.add(key)
+            unique_news.append(item)
+    
+    # 4. 按时间倒序排列
+    sorted_news = sorted(unique_news, key=lambda x: x.get('time', ''), reverse=True)
+    
+    # 5. 写回
     output = {
         'crawl_time': datetime.now().isoformat(),
-        'news_count': len(sorted_news),
+        'news_count': len(all_new_news or []),
+        'accumulated': True,
+        'total_accumulated': len(sorted_news),
         'news': sorted_news
     }
     
-    output_path = os.path.join(OUTPUT_DIR, 'new_news.json')
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
 

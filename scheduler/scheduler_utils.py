@@ -17,9 +17,10 @@ def update_csv(
     fetch_fn,
     label: str,
     read_existing: bool = False,
+    force: bool = False,
 ) -> pd.DataFrame | None:
     os.makedirs(os.path.dirname(file_path) or ".", exist_ok=True)
-    if is_fresh(file_path):
+    if not force and is_fresh(file_path):
         print(f"{label}数据文件较新，已跳过更新")
         if read_existing:
             return pd.read_csv(file_path)

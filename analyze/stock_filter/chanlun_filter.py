@@ -48,6 +48,51 @@ def load_bulao_signal_func():
 get_bulao_buy_sell_signals = load_bulao_signal_func()
 
 
+def add_virtual_day_df(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    在数据末尾添加1天虚拟数据
+
+    虚拟数据日期为数据最新日期+1天，OCLH都为最新日期的close
+
+    Args:
+        df: 原始K线数据，必须包含 date, open, close, low, high 列
+
+    Returns:
+        添加虚拟数据后的DataFrame
+    """
+    if df is None or df.empty:
+        return df
+
+    df = df.copy()
+
+    # 获取最后一行数据
+    last_row = df.iloc[-1]
+    last_date = pd.to_datetime(last_row['date'])
+    last_close = last_row['close']
+
+    # 计算虚拟日期（最新日期+1天）
+    virtual_date = (last_date + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+
+    # 创建虚拟数据行
+    virtual_row = {
+        'date': virtual_date,
+        'open': last_close,
+        'close': last_close,
+        'low': last_close,
+        'high': last_close
+    }
+
+    # 添加 volume 列（如果存在）
+    if 'volume' in df.columns:
+        virtual_row['volume'] = 0
+
+    # 使用 pd.concat 添加新行
+    virtual_df = pd.DataFrame([virtual_row])
+    df = pd.concat([df, virtual_df], ignore_index=True)
+
+    return df
+
+
 def check_macd_filter(macd_hist_series: pd.Series, current_index: int) -> bool:
     """
     检查MACD是否满足过滤条件
@@ -229,7 +274,8 @@ def filter_stocks_with_dual_buy_signal_recent_days(
     stock_list: pd.DataFrame,
     data_fetcher: DataFetcher,
     lookback_days: int = 60,
-    recent_days: int = 3
+    recent_days: int = 3,
+    add_virtual_day: bool = False
 ) -> List[Dict]:
     """
     筛选最近N天同时出现缠论买点、BULAO金叉且MACD过滤通过的个股
@@ -244,6 +290,7 @@ def filter_stocks_with_dual_buy_signal_recent_days(
         data_fetcher: DataFetcher 实例
         lookback_days: 回溯天数，用于获取足够的历史数据计算缠论和MACD
         recent_days: 最近N天（含今天）
+        add_virtual_day: 是否添加虚拟交易日数据（最新日期+1天，OHLC=最新close）
 
     Returns:
         最近N天共振个股列表，每个元素包含股票代码、名称和信号信息
@@ -263,34 +310,49 @@ def filter_stocks_with_dual_buy_signal_recent_days(
     print(f"开始筛选最近{recent_days}天({start_recent} ~ {today})缠论买点+BULAO金叉共振个股...")
     print(f"总股票数: {total}")
     print(f"回溯天数: {lookback_days}")
+    if add_virtual_day:
+        print("虚拟数据模式: 已启用（将在最新日期+1天添加虚拟交易日）")
     print("-" * 60)
-    
-    for idx, row in stock_list.iterrows():
+
+    for processed, (_, row) in enumerate(stock_list.iterrows(), start=1):
         ts_code = row['ts_code']
         symbol = row['symbol']
         name = row.get('name', '')
-        
-        if (idx + 1) % 100 == 0:
-            print(f"已处理 {idx + 1}/{total} 只股票...")
-        
+
+        if processed % 100 == 0 or processed == total:
+            print(f"已处理 {processed}/{total} 只股票...")
+
         try:
-            # 获取缠论买卖信号
+            # 获取K线数据（用于添加虚拟数据）
+            base_df = None
+            if add_virtual_day:
+                base_df = data_fetcher.get_stock_daily(
+                    symbol=ts_code,
+                    start_date=start_date,
+                    end_date=None
+                )
+                if base_df is not None and not base_df.empty:
+                    base_df = add_virtual_day_df(base_df)
+
+            # 获取缠论买卖信号（传入处理后的df）
             chanlun_result = get_chanlun_buy_sell_signals(
                 stock_code=ts_code,
                 start_date=start_date,
                 end_date=None,
-                data_fetcher=data_fetcher
+                data_fetcher=data_fetcher,
+                df=base_df
             )
 
             if 'error' in chanlun_result:
                 continue
 
-            # 获取BULAO买卖信号（金叉对应 signal=买入）
+            # 获取BULAO买卖信号（金叉对应 signal=买入，传入处理后的df）
             bulao_result = get_bulao_buy_sell_signals(
                 stock_code=ts_code,
                 start_date=start_date,
                 end_date=None,
-                data_fetcher=data_fetcher
+                data_fetcher=data_fetcher,
+                df=base_df
             )
 
             if 'error' in bulao_result:
@@ -408,6 +470,11 @@ def parse_args() -> argparse.Namespace:
         default=3,
         help='最近N天（含今天），默认3'
     )
+    parser.add_argument(
+        '--add-virtual-day',
+        action='store_true',
+        help='添加虚拟交易日数据（最新日期+1天，OHLC=最新close）'
+    )
     return parser.parse_args()
 
 
@@ -471,7 +538,8 @@ def main():
         stock_list=stock_list_df,
         data_fetcher=fetcher,
         lookback_days=365*2,  # 缠论需要足够的历史数据
-        recent_days=args.days
+        recent_days=args.days,
+        add_virtual_day=args.add_virtual_day
     )
     
     # 4. 输出结果

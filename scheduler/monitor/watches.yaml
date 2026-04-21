@@ -1,0 +1,48 @@
+watches:
+  - ts_code: "002309.SZ"
+    name: 中利集团
+    strategies:
+      - type: stabilization
+        params:
+          min_decline_pct: 0.5
+          recent_points: 3
+          max_range_pct: 0.5
+        notify: [feishu_xiaozhuo, weixin_xiaozhuo]
+
+  - ts_code: "000636.SZ"
+    name: 风华高科
+    strategies:
+      - type: pullback_zone
+        params:
+          zone_low: 20.00
+          zone_high: 20.20
+          caution_price: 19.50
+          stop_loss: 18.44
+        notify: [feishu_xiaozhuo, weixin_xiaozhuo]
+      - type: ma_proximity
+        params:
+          mas: [5, 10, 20]
+          proximity_pct: 1.5
+        notify: [feishu_xiaozhuo, weixin_xiaozhuo]
+
+  # 策略A放宽条件候选 — pos已到位(pos=0.00)，等待底分型阳线确认入场
+  - ts_code: "603350.SH"
+    name: 安乃达
+    strategies:
+      - type: pos_threshold
+        params:
+          threshold: 0.5
+          window: 20
+        notify: [feishu_xiaozhuo, weixin_xiaozhuo]
+      - type: bottom_fractal_yang
+        params:
+          min_body_pct: 0
+        notify: [feishu_xiaozhuo, weixin_xiaozhuo]
+
+notify_channels:
+  feishu_xiaozhuo:
+    type: feishu_mention
+    target: ou_8ca22888f5b7e33129fd69b193436ffd
+  weixin_xiaozhuo:
+    type: weixin
+    target: o9cq809quOi3wbLt4p9qI-cjq6r8@im.wechat

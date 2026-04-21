@@ -119,16 +119,17 @@ def main():
     print(builder.to_json())
 
 
-def get_buy_sell_signals(stock_code, start_date=None, end_date=None, data_fetcher=None):
+def get_buy_sell_signals(stock_code, start_date=None, end_date=None, data_fetcher=None, df=None):
     """
     获取股票的缠论买卖信号
-    
+
     参数:
         stock_code: 股票代码，如 '601888'
         start_date: 开始日期，格式 'YYYYMMDD'，如 None 则从一年前开始
         end_date: 结束日期，格式 'YYYYMMDD'，如 None 则取到最新
         data_fetcher: DataFetcher实例，如为 None 则创建新实例
-    
+        df: 预处理的K线数据，如提供则跳过数据获取步骤
+
     返回:
         dict: 包含以下键的结构化数据:
             - stock_code: 股票代码
@@ -142,17 +143,28 @@ def get_buy_sell_signals(stock_code, start_date=None, end_date=None, data_fetche
     """
     # 使用传入的 data_fetcher 或创建新的
     fetcher = data_fetcher if data_fetcher else DataFetcher()
-    
-    # 获取数据
-    df = fetcher.get_stock_daily(stock_code, start_date=start_date, end_date=end_date)
-    if df is None or df.empty:
-        return {
-            'stock_code': stock_code,
-            'error': '无法获取数据',
-            'signals': [],
-            'df': None,
-            'annotations': None
-        }
+
+    # 获取数据（如果未提供df）
+    if df is None:
+        df = fetcher.get_stock_daily(stock_code, start_date=start_date, end_date=end_date)
+        if df is None or df.empty:
+            return {
+                'stock_code': stock_code,
+                'error': '无法获取数据',
+                'signals': [],
+                'df': None,
+                'annotations': None
+            }
+    else:
+        # 使用传入的df
+        if df.empty:
+            return {
+                'stock_code': stock_code,
+                'error': '传入的数据为空',
+                'signals': [],
+                'df': None,
+                'annotations': None
+            }
     
     C = df.close.values
     O = df.open.values
