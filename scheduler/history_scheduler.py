@@ -287,6 +287,70 @@ def main():
     )
 
     # ------------------------------------------------------------------
+    # 板块(同花顺行业/概念)日线数据更新
+    # 从 stock_board.csv 读取板块列表, 增量更新到 board_daily/
+    # 接口: pro.ths_daily(ts_code, start_date, end_date)
+    # 字段: ts_code, trade_date, open, high, low, close, pre_close,
+    #        avg_price, change, pct_change, vol, turnover_rate
+    # ------------------------------------------------------------------
+    board_daily_dir = os.path.join(data_dir, "board_daily")
+    os.makedirs(board_daily_dir, exist_ok=True)
+    bd_fetched = 0
+    bd_saved = 0
+    bd_skipped = 0
+    bd_failed = 0
+
+    for _, row in tqdm(stock_board.iterrows(), total=len(stock_board), desc="更新板块日线数据"):
+        ts_code = row["ts_code"]
+        board_name = row["name"]
+        bd_path = os.path.join(board_daily_dir, f"{ts_code}.csv")
+
+        # 增量: 确定起始日期
+        start_dt = "20220101"
+        if not args.force and os.path.exists(bd_path):
+            try:
+                df_exist = pd.read_csv(bd_path, dtype=str)
+                if not df_exist.empty and "trade_date" in df_exist.columns:
+                    last_date = df_exist["trade_date"].max()
+                    last_d = _dt.datetime.strptime(last_date, "%Y%m%d")
+                    start_dt = (last_d + _dt.timedelta(days=1)).strftime("%Y%m%d")
+                    if start_dt > today_str:
+                        bd_skipped += 1
+                        continue  # 已是最新
+            except Exception:
+                start_dt = "20220101"
+
+        df_bd = fetch_with_retry(
+            lambda _tc=ts_code, _sd=start_dt: pro.ths_daily(
+                ts_code=_tc, start_date=_sd, end_date=today_str
+            ),
+            f"{board_name}({ts_code}) 板块日线",
+        )
+        if df_bd is None or df_bd.empty:
+            bd_failed += 1
+            continue
+
+        bd_fetched += 1
+        try:
+            # 增量合并
+            if os.path.exists(bd_path) and start_dt != "20220101":
+                df_old = pd.read_csv(bd_path, dtype=str)
+                df_bd = pd.concat([df_old, df_bd], ignore_index=True).drop_duplicates(
+                    subset=["trade_date"], keep="last"
+                ).sort_values("trade_date")
+            df_bd.to_csv(bd_path, index=False, encoding="utf-8-sig")
+            bd_saved += 1
+        except Exception as exc:
+            bd_failed += 1
+            print(f"警告: {board_name}({ts_code}) 板块日线保存失败: {exc}")
+        time.sleep(MIN_CALL_INTERVAL_SECONDS)
+
+    print(
+        f"板块日线更新统计: 总数 {len(stock_board)} 个, 获取到 {bd_fetched} 个, "
+        f"保存 {bd_saved} 个, 跳过 {bd_skipped} 个, 失败 {bd_failed} 个"
+    )
+
+    # ------------------------------------------------------------------
     # 指数日线数据更新
     # 从 index_list.csv 读取需要更新的指数列表, 增量更新到 stock_daily/
     # ------------------------------------------------------------------
